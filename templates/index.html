@@ -1,0 +1,89 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="board">
+  {% if trash_mode %}
+    <div class="trash-header">
+      <h2>Lixeira</h2>
+      <div class="trash-actions">
+        <button type="button" id="trashSelectAll" class="btn-secondary">Selecionar Todos</button>
+        <button type="button" onclick="document.getElementById('batchDeleteForm').submit()" class="btn-danger">Deletar Selecionados</button>
+      </div>
+      <form method="post" action="{{ url_for('batch_delete') }}" id="batchDeleteForm" style="display:none;"></form>
+    </div>
+  {% endif %}
+
+  {% if not tasks %}
+    <div class="empty-state">
+      {% if q %}
+        <p>Ops! Nenhum resultado encontrado para "<strong>{{ q }}</strong>". 😕</p>
+        <p>Tente verificar a ortografia ou usar termos diferentes.</p>
+      {% else %}
+        <p class="empty">
+            {% if trash_mode %}
+                A lixeira está vazia.
+            {% else %}
+                Nenhuma tarefa ainda. Clique no + para adicionar.
+            {% endif %}
+        </p>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="cards">
+      <form method="post" action="{{ url_for('batch_soft_delete') }}" id="mainBatchDeleteForm" style="display:none;"></form>
+      {% for t in tasks %}
+        <div class="card card-{{ t.status }}" style="background: {{ t.color or '#ffffff' }}"
+             data-id="{{ t.id }}"
+             data-client="{{ t.client_name }}"
+             data-status="{{ t.status }}"
+             data-color="{{ t.color or '#ffffff' }}">
+          <div class="card-top">
+            <div class="raw-notes" style="display:none;">{{ t.notes }}</div>
+            {% if trash_mode %}
+              <input type="checkbox" name="task_ids" value="{{ t.id }}" form="batchDeleteForm" class="card-checkbox">
+            {% else %}
+              <input type="checkbox" name="task_ids" value="{{ t.id }}" form="mainBatchDeleteForm" class="card-select-checkbox" style="display:none">
+            {% endif %}
+            <div class="menu">
+              <button class="menu-btn" title="Mais opções">⋯</button>
+              <div class="menu-list">
+                {% if trash_mode %}
+                  <form method="post" action="{{ url_for('restore_task', task_id=t.id) }}">
+                    <button class="menu-item" type="submit">Restaurar</button>
+                  </form>
+                  <form method="post" action="{{ url_for('delete_permanently', task_id=t.id) }}">
+                    <button class="menu-item danger" type="submit">Excluir Permanentemente</button>
+                  </form>
+                {% else %}
+                  <button class="menu-item edit-card-btn" type="button">Editar card</button>
+                  <form method="post" action="{{ url_for('delete_task', task_id=t.id) }}">
+                    <button class="menu-item danger" type="submit">Excluir card</button>
+                  </form>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+          <div class="card-body">
+            <h4 class="title">{{ t.client_name or 'Cliente' }}</h4>
+            {% if t.notes %}
+              <p class="notes clamp" data-notes="{{ t.notes }}">{{ t.notes }}</p>
+            {% endif %}
+            
+            {% if trash_mode %}
+               <p class="status-badge">{{ t.status }}</p>
+            {% else %}
+              <form method="post" action="{{ url_for('update_status', task_id=t.id) }}" class="status-form">
+                <select name="status" onchange="this.form.submit()">
+                  <option value="em_atendimento" {% if t.status=='em_atendimento' %}selected{% endif %}>Em atendimento</option>
+                  <option value="verificando" {% if t.status=='verificando' %}selected{% endif %}>Verificando</option>
+                  <option value="em_analise" {% if t.status=='em_analise' %}selected{% endif %}>Em análise</option>
+                  <option value="retornar" {% if t.status=='retornar' %}selected{% endif %}>Retornar</option>
+                </select>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

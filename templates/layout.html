@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tarefas</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=1.7">
+  </head>
+  <body>
+    <div class="app-shell {% if not current_user.is_authenticated %}no-sidebar{% endif %}">
+      {% if current_user.is_authenticated %}
+      <aside class="sidebar">
+        <button class="icon-btn" title="Layout do Aplicativo" onclick="window.location='{{ url_for('board') }}'">
+          <span class="icon">🏠</span>
+        </button>
+        <button class="icon-btn" title="Selecionar Todos" id="selectAllBtn">
+          <span class="icon">☑️</span>
+        </button>
+        <button class="icon-btn" title="Pesquisar" id="searchToggle">
+          <span class="icon">🔍</span>
+        </button>
+        <button class="icon-btn" title="Configurações" id="settingsToggle">
+          <span class="icon">⚙️</span>
+        </button>
+        <button class="icon-btn" title="Lixeira" onclick="window.location='{{ url_for('trash') }}'">
+          <span class="icon">🗑️</span>
+        </button>
+        <button class="icon-btn" title="Sair" onclick="window.location='{{ url_for('logout') }}'">
+          <span class="icon">🚪</span>
+        </button>
+      </aside>
+      {% endif %}
+      <main class="content {% if not current_user.is_authenticated %}login-page{% endif %}">
+        {% if current_user.is_authenticated %}
+          <div id="searchBar" class="search-bar {% if q %}open{% endif %}">
+            <form method="get" action="{{ url_for('board') }}">
+              <input name="q" value="{{ q or '' }}" placeholder="Buscar tarefas...">
+              <button type="submit">Buscar</button>
+            </form>
+          </div>
+        {% endif %}
+        {% block content %}{% endblock %}
+      </main>
+      {% if current_user.is_authenticated %}
+        <button class="fab" title="Adicionar" id="openModal">+</button>
+        <button class="fab fab-trash" title="Excluir Selecionados" onclick="document.getElementById('mainBatchDeleteForm').submit()" style="display:none;">🗑️</button>
+      {% endif %}
+    </div>
+
+    <div class="flash-container">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">
+              {{ message|safe }}
+            </div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+    </div>
+
+    {% if current_user.is_authenticated %}
+      <div id="modal" class="modal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="modalTitle">Tarefas</h3>
+            <button class="close" id="closeModal">×</button>
+          </div>
+          <form method="post" action="{{ url_for('create_task') }}" class="modal-body" id="taskForm">
+            <label>Nome do cliente</label>
+            <input name="client_name" id="taskClientName" placeholder="Nome do cliente" required>
+            <label>Anotações</label>
+            <textarea name="notes" id="taskNotes" class="auto-resize" placeholder="Suas anotações aqui..."></textarea>
+            <label>Cor do card</label>
+            <div class="color-palette">
+              {% for c in CARD_COLORS %}
+              <label class="swatch">
+                <input type="radio" name="color" value="{{ c }}" {% if loop.index0 == 0 %}checked{% endif %}>
+                <span style="background: {{ c }}"></span>
+              </label>
+              {% endfor %}
+            </div>
+            <label>Status</label>
+            <div class="status-tabs">
+              <label><input type="radio" name="status" value="em_atendimento" checked> Em atendimento</label>
+              <label><input type="radio" name="status" value="verificando"> Verificando</label>
+              <label><input type="radio" name="status" value="em_analise"> Em análise</label>
+              <label><input type="radio" name="status" value="retornar"> Retornar</label>
+            </div>
+            <div class="modal-actions">
+              <button type="submit" class="primary" id="modalSubmitBtn">Salvar</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <div id="settingsModal" class="modal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>Configurações</h3>
+            <button class="close" id="closeSettings">×</button>
+          </div>
+          <div class="modal-body">
+            <h4>Tema</h4>
+            <div class="theme-selector">
+              <label><input type="radio" name="theme" value="light" checked> Claro</label>
+              <label><input type="radio" name="theme" value="dark"> Escuro</label>
+              <label><input type="radio" name="theme" value="warm"> Quente</label>
+            </div>
+            <div class="modal-actions">
+              <button type="button" class="primary" id="saveThemeBtn" style="width: 100%">Salvar Tema</button>
+            </div>
+            <hr>
+            <h4>Alterar Senha</h4>
+            <form method="post" action="{{ url_for('change_password') }}">
+              <label>Usuário</label>
+              <input name="username" placeholder="Seu usuário" required>
+              <label>Senha Atual</label>
+              <input type="password" name="old_password" placeholder="Senha atual" required>
+              <label>Nova Senha</label>
+              <input type="password" name="new_password" placeholder="Nova senha" required>
+              <button type="submit" class="primary" style="margin-top: 10px; width: 100%">Atualizar Senha</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+
+    <script src="{{ url_for('static', filename='js/main.js') }}?v=1.5"></script>
+  </body>
+</html>
