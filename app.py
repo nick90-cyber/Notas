@@ -1,38 +1,65 @@
 import os
 from datetime import datetime
-import sqlite3
-from types import SimpleNamespace
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+USE_SA = True
+try:
+    from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
+    from sqlalchemy.orm import declarative_base, sessionmaker, scoped_session
+except Exception:
+    USE_SA = False
+    import sqlite3
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "app.db")
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "change-this-secret-key"
-app.config["DATABASE"] = DB_PATH
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "change-this-secret-key")
+raw_db = os.environ.get("DATABASE_URL") or os.environ.get("DATABASE")
+if USE_SA:
+    if raw_db:
+        DB_URL = raw_db
+    else:
+        DB_URL = "sqlite:///" + DB_PATH.replace("\\", "/")
+    engine = create_engine(DB_URL, pool_pre_ping=True)
+    SessionLocal = scoped_session(sessionmaker(bind=engine, autocommit=False, autoflush=False))
+    Base = declarative_base()
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 
-def get_db():
-    conn = sqlite3.connect(app.config["DATABASE"], check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-class User(UserMixin):
-    def __init__(self, id, username, password_hash, created_at):
-        self.id = id
-        self.username = username
-        self.password_hash = password_hash
-        self.created_at = created_at
-
-    @staticmethod
-    def from_row(row):
-        return User(row["id"], row["username"], row["password_hash"], row["created_at"])
-
-    def check_password(self, password: str) -> bool:
-        return check_password_hash(self.password_hash, password)
+if USE_SA:
+    class User(Base, UserMixin):
+        __tablename__ = "user"
+        id = Column(Integer, primary_key=True)
+        username = Column(String, unique=True, nullable=False)
+        password_hash = Column(String, nullable=False)
+        created_at = Column(String, nullable=False)
+        def check_password(self, password: str) -> bool:
+            return check_password_hash(self.password_hash, password)
+    class Task(Base):
+        __tablename__ = "task"
+        id = Column(Integer, primary_key=True)
+        title = Column(String)
+        client_name = Column(String)
+        notes = Column(String)
+        status = Column(String, nullable=False)
+        color = Column(String)
+        created_at = Column(String, nullable=False)
+        deleted_at = Column(String)
+        user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
+else:
+    class User(UserMixin):
+        def __init__(self, id, username, password_hash, created_at):
+            self.id = id
+            self.username = username
+            self.password_hash = password_hash
+            self.created_at = created_at
+        @staticmethod
+        def from_row(row):
+            return User(row["id"], row["username"], row["password_hash"], row["created_at"])
+        def check_password(self, password: str) -> bool:
+            return check_password_hash(self.password_hash, password)
 
 
 class TaskStatus:
@@ -61,88 +88,166 @@ def inject_globals():
     return dict(CARD_COLORS=CARD_COLORS)
 
 def find_user_by_id(user_id: int):
-    conn = get_db()
-    cur = conn.execute("SELECT * FROM user WHERE id = ?", (user_id,))
-    row = cur.fetchone()
-    conn.close()
-    return User.from_row(row) if row else None
+    if USE_SA:
+        session = SessionLocal()
+        try:
+            return session.get(User, user_id)
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute("SELECT * FROM user WHERE id = ?", (user_id,))
+        row = cur.fetchone()
+        conn.close()
+        return User.from_row(row) if row else None
 
 def find_user_by_username(username: str):
-    conn = get_db()
-    cur = conn.execute("SELECT * FROM user WHERE username = ?", (username,))
-    row = cur.fetchone()
-    conn.close()
-    return User.from_row(row) if row else None
+    if USE_SA:
+        session = SessionLocal()
+        try:
+            return session.query(User).filter(User.username == username).first()
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute("SELECT * FROM user WHERE username = ?", (username,))
+        row = cur.fetchone()
+        conn.close()
+        return User.from_row(row) if row else None
 
 def add_task_db(client_name: str, notes: str, status: str, user_id: int, color: str):
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO task (title, client_name, notes, status, color, created_at, deleted_at, user_id) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
-        (client_name, client_name, notes, status, color, datetime.utcnow().isoformat(), user_id),
-    )
-    conn.commit()
-    conn.close()
+    if USE_SA:
+        session = SessionLocal()
+        try:
+            t = Task(title=client_name, client_name=client_name, notes=notes, status=status, color=color, created_at=datetime.utcnow().isoformat(), deleted_at=None, user_id=user_id)
+            session.add(t)
+            session.commit()
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.execute(
+            "INSERT INTO task (title, client_name, notes, status, color, created_at, deleted_at, user_id) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
+            (client_name, client_name, notes, status, color, datetime.utcnow().isoformat(), user_id),
+        )
+        conn.commit()
+        conn.close()
 
 def soft_delete_task(task_id: int, user_id: int):
-    conn = get_db()
-    conn.execute(
-        "UPDATE task SET deleted_at = ? WHERE id = ? AND user_id = ?",
-        (datetime.utcnow().isoformat(), task_id, user_id),
-    )
-    conn.commit()
-    conn.close()
+    if USE_SA:
+        session = SessionLocal()
+        try:
+            t = session.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+            if t:
+                t.deleted_at = datetime.utcnow().isoformat()
+                session.commit()
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.execute("UPDATE task SET deleted_at = ? WHERE id = ? AND user_id = ?", (datetime.utcnow().isoformat(), task_id, user_id))
+        conn.commit()
+        conn.close()
 
 def undo_soft_delete_task(task_id: int, user_id: int):
-    conn = get_db()
-    conn.execute(
-        "UPDATE task SET deleted_at = NULL WHERE id = ? AND user_id = ?",
-        (task_id, user_id),
-    )
-    conn.commit()
-    conn.close()
+    if USE_SA:
+        session = SessionLocal()
+        try:
+            t = session.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+            if t:
+                t.deleted_at = None
+                session.commit()
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.execute("UPDATE task SET deleted_at = NULL WHERE id = ? AND user_id = ?", (task_id, user_id))
+        conn.commit()
+        conn.close()
 
 def update_password_db(user_id: int, new_hash: str):
-    conn = get_db()
-    conn.execute(
-        "UPDATE user SET password_hash = ? WHERE id = ?",
-        (new_hash, user_id),
-    )
-    conn.commit()
-    conn.close()
+    if USE_SA:
+        session = SessionLocal()
+        try:
+            u = session.get(User, user_id)
+            if u:
+                u.password_hash = new_hash
+                session.commit()
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.execute("UPDATE user SET password_hash = ? WHERE id = ?", (new_hash, user_id))
+        conn.commit()
+        conn.close()
 
 def update_task_db(task_id: int, client_name: str, notes: str, status: str, user_id: int, color: str):
-    conn = get_db()
-    conn.execute(
-        "UPDATE task SET client_name = ?, notes = ?, status = ?, color = ? WHERE id = ? AND user_id = ?",
-        (client_name, notes, status, color, task_id, user_id),
-    )
-    conn.commit()
-    conn.close()
+    if USE_SA:
+        session = SessionLocal()
+        try:
+            t = session.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+            if t:
+                t.client_name = client_name
+                t.notes = notes
+                t.status = status
+                t.color = color
+                session.commit()
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.execute("UPDATE task SET client_name = ?, notes = ?, status = ?, color = ? WHERE id = ? AND user_id = ?", (client_name, notes, status, color, task_id, user_id))
+        conn.commit()
+        conn.close()
 
 def update_task_status(task_id: int, user_id: int, new_status: str):
-    conn = get_db()
-    conn.execute(
-        "UPDATE task SET status = ? WHERE id = ? AND user_id = ?",
-        (new_status, task_id, user_id),
-    )
-    conn.commit()
-    conn.close()
+    if USE_SA:
+        session = SessionLocal()
+        try:
+            t = session.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+            if t:
+                t.status = new_status
+                session.commit()
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.execute("UPDATE task SET status = ? WHERE id = ? AND user_id = ?", (new_status, task_id, user_id))
+        conn.commit()
+        conn.close()
 
 def list_tasks(user_id: int, show_all: bool, q: str, only_deleted: bool = False):
-    conn = get_db()
-    base_sql = "SELECT * FROM task WHERE user_id = ?"
-    params = [user_id]
-    if only_deleted:
-        base_sql += " AND deleted_at IS NOT NULL"
-    elif not show_all:
-        base_sql += " AND deleted_at IS NULL"
-    if q:
-        base_sql += " AND client_name LIKE ?"
-        params.append(f"%{q}%")
-    base_sql += " ORDER BY created_at DESC"
-    rows = conn.execute(base_sql, tuple(params)).fetchall()
-    conn.close()
-    return [SimpleNamespace(**dict(row)) for row in rows]
+    if USE_SA:
+        session = SessionLocal()
+        try:
+            query = session.query(Task).filter(Task.user_id == user_id)
+            if only_deleted:
+                query = query.filter(Task.deleted_at.isnot(None))
+            elif not show_all:
+                query = query.filter(Task.deleted_at.is_(None))
+            if q:
+                query = query.filter(Task.client_name.like(f"%{q}%"))
+            return query.order_by(Task.created_at.desc()).all()
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        base_sql = "SELECT * FROM task WHERE user_id = ?"
+        params = [user_id]
+        if only_deleted:
+            base_sql += " AND deleted_at IS NOT NULL"
+        elif not show_all:
+            base_sql += " AND deleted_at IS NULL"
+        if q:
+            base_sql += " AND client_name LIKE ?"
+            params.append(f"%{q}%")
+        base_sql += " ORDER BY created_at DESC"
+        rows = conn.execute(base_sql, tuple(params)).fetchall()
+        conn.close()
+        return [type("T", (), dict(row)) for row in rows]
 
 
 @login_manager.user_loader
@@ -151,45 +256,61 @@ def load_user(user_id):
 
 
 def init_db():
-    conn = get_db()
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS user ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "username TEXT UNIQUE NOT NULL,"
-        "password_hash TEXT NOT NULL,"
-        "created_at TEXT NOT NULL)"
-    )
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS task ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "title TEXT NULL,"
-        "client_name TEXT NULL,"
-        "notes TEXT NULL,"
-        "status TEXT NOT NULL,"
-        "color TEXT NULL,"
-        "created_at TEXT NOT NULL,"
-        "deleted_at TEXT NULL,"
-        "user_id INTEGER NOT NULL,"
-        "FOREIGN KEY(user_id) REFERENCES user(id))"
-    )
-    cols = [r["name"] for r in conn.execute("PRAGMA table_info('task')").fetchall()]
-    if "client_name" not in cols:
-        conn.execute("ALTER TABLE task ADD COLUMN client_name TEXT NULL")
-        conn.execute("UPDATE task SET client_name = title WHERE client_name IS NULL")
-    if "notes" not in cols:
-        conn.execute("ALTER TABLE task ADD COLUMN notes TEXT NULL")
-    if "color" not in cols:
-        conn.execute("ALTER TABLE task ADD COLUMN color TEXT NULL")
-    cur = conn.execute("SELECT id FROM user WHERE username = 'admin'")
-    row = cur.fetchone()
-    if not row:
+    if USE_SA:
+        Base.metadata.create_all(engine)
+        session = SessionLocal()
+        try:
+            exists = session.query(User).filter(User.username == "admin").first()
+            if not exists:
+                u = User(username="admin", password_hash=generate_password_hash("123"), created_at=datetime.utcnow().isoformat())
+                session.add(u)
+                session.commit()
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         conn.execute(
-            "INSERT INTO user (username, password_hash, created_at) VALUES (?, ?, ?)",
-            ("admin", generate_password_hash("123"), datetime.utcnow().isoformat()),
+            "CREATE TABLE IF NOT EXISTS user ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "username TEXT UNIQUE NOT NULL,"
+            "password_hash TEXT NOT NULL,"
+            "created_at TEXT NOT NULL)"
         )
-    conn.commit()
-    conn.close()
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS task ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "title TEXT NULL,"
+            "client_name TEXT NULL,"
+            "notes TEXT NULL,"
+            "status TEXT NOT NULL,"
+            "color TEXT NULL,"
+            "created_at TEXT NOT NULL,"
+            "deleted_at TEXT NULL,"
+            "user_id INTEGER NOT NULL,"
+            "FOREIGN KEY(user_id) REFERENCES user(id))"
+        )
+        cur = conn.execute("SELECT id FROM user WHERE username = 'admin'")
+        row = cur.fetchone()
+        if not row:
+            conn.execute(
+                "INSERT INTO user (username, password_hash, created_at) VALUES (?, ?, ?)",
+                ("admin", generate_password_hash("123"), datetime.utcnow().isoformat()),
+            )
+        conn.commit()
+        conn.close()
 
+_did_init = False
+@app.before_request
+def setup_app():
+    global _did_init
+    if not _did_init:
+        init_db()
+        _did_init = True
+
+@app.teardown_appcontext
+def remove_session(exception=None):
+    if USE_SA:
+        SessionLocal.remove()
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -251,10 +372,20 @@ def restore_task(task_id):
 @app.route("/trash/delete/<int:task_id>", methods=["POST"])
 @login_required
 def delete_permanently(task_id):
-    conn = get_db()
-    conn.execute("DELETE FROM task WHERE id = ? AND user_id = ?", (task_id, current_user.id))
-    conn.commit()
-    conn.close()
+    if USE_SA:
+        session = SessionLocal()
+        try:
+            t = session.query(Task).filter(Task.id == task_id, Task.user_id == current_user.id).first()
+            if t:
+                session.delete(t)
+                session.commit()
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn.execute("DELETE FROM task WHERE id = ? AND user_id = ?", (task_id, current_user.id))
+        conn.commit()
+        conn.close()
     flash("Tarefa excluída permanentemente", "success")
     return redirect(url_for("trash"))
 
@@ -263,9 +394,20 @@ def delete_permanently(task_id):
 @login_required
 def batch_delete():
     task_ids = request.form.getlist("task_ids")
-    for tid in task_ids:
-        conn = get_db()
-        conn.execute("DELETE FROM task WHERE id = ? AND user_id = ?", (int(tid), current_user.id))
+    if USE_SA:
+        session = SessionLocal()
+        try:
+            for tid in task_ids:
+                t = session.query(Task).filter(Task.id == int(tid), Task.user_id == current_user.id).first()
+                if t:
+                    session.delete(t)
+            session.commit()
+        finally:
+            session.close()
+    else:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        for tid in task_ids:
+            conn.execute("DELETE FROM task WHERE id = ? AND user_id = ?", (int(tid), current_user.id))
         conn.commit()
         conn.close()
     flash(f"{len(task_ids)} tarefas excluídas permanentemente", "success")
