@@ -2,11 +2,11 @@
 {% block content %}
 <div class="login-box">
   <h2>Entrar</h2>
-  <form method="post" action="{{ url_for('login') }}">
+  <form method="post" action="{{ url_for('login') }}" autocomplete="off">
     <label>Usuário</label>
-    <input type="text" name="username" placeholder="Insira o usuário" required>
+    <input type="text" name="username" placeholder="Insira o usuário" required autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
     <label>Senha</label>
-    <input type="password" name="password" placeholder="Insira a senha" required>
+    <input type="password" name="password" placeholder="Insira a senha" required autocomplete="off">
     <button type="submit" class="primary">Login</button>
   </form>
 </div>

@@ -113,11 +113,11 @@
             <h4>Alterar Senha</h4>
             <form method="post" action="{{ url_for('change_password') }}">
               <label>Usuário</label>
-              <input name="username" placeholder="Seu usuário" required>
+              <input name="username" placeholder="Seu usuário" required autocomplete="off">
               <label>Senha Atual</label>
-              <input type="password" name="old_password" placeholder="Senha atual" required>
+              <input type="password" name="old_password" placeholder="Senha atual" required autocomplete="current-password">
               <label>Nova Senha</label>
-              <input type="password" name="new_password" placeholder="Nova senha" required>
+              <input type="password" name="new_password" placeholder="Nova senha" required autocomplete="new-password">
               <button type="submit" class="primary" style="margin-top: 10px; width: 100%">Atualizar Senha</button>
             </form>
           </div>
